@@ -1,40 +1,40 @@
 package com.example.globalhistorybe.entity;
 
 import jakarta.persistence.*;
-import lombok.Data;
-
+import lombok.*;
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "notifications")
-@Data
+@Data @NoArgsConstructor @AllArgsConstructor @Builder
 public class Notification {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // FK -> users
-    @ManyToOne
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
+    @Column(name = "user_id", nullable = false)
+    private Long userId;
 
-    // loại notification (string theo DB của mày)
+    @Column(name = "actor_id")
+    private Long actorId;
+
+    @Column(name = "related_id")
+    private Long relatedId;
+
+    @Column(name = "related_type", length = 30)
+    private String relatedType;
+
     @Column(nullable = false)
-    private String type;
+    private String title;
 
-    // nội dung
     @Column(columnDefinition = "TEXT")
-    private String content;
+    private String message;
 
-    // đã đọc chưa
-    @Column(name = "is_read")
+    @Column(name = "is_read") @Builder.Default
     private Boolean isRead = false;
 
-    // id liên quan (article, comment, edit...)
-    @Column(name = "reference_id")
-    private Long referenceId;
-
-    @Column(name = "created_at")
+    @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
+
+    @PrePersist
+    protected void onCreate() { createdAt = LocalDateTime.now(); }
 }

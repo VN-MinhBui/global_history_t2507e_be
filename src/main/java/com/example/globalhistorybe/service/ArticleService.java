@@ -2,141 +2,209 @@ package com.example.globalhistorybe.service;
 
 import com.example.globalhistorybe.dto.req.ArticleRequest;
 import com.example.globalhistorybe.dto.res.ArticleResponse;
-import com.example.globalhistorybe.dto.res.SectionDTO;
 import com.example.globalhistorybe.entity.Article;
-import com.example.globalhistorybe.repository.ArticleRepository;
-import lombok.AllArgsConstructor;
-import org.springframework.data.domain.Page;
+import com.example.globalhistorybe.entity.Category;
+import com.example.globalhistorybe.entity.Tag;
+import com.example.globalhistorybe.entity.Topic;
+import com.example.globalhistorybe.entity.User;
+import com.example.globalhistorybe.exception.ResourceNotFoundException;
+import com.example.globalhistorybe.repository.*;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-
-import org.springframework.data.domain.Pageable;
-
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
+import org.springframework.transaction.annotation.Transactional;
+import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
-@AllArgsConstructor
+@RequiredArgsConstructor
 public class ArticleService {
 
-    private final ArticleRepository repo;
+    private final ArticleRepository articleRepository;
+    private final UserRepository userRepository;
+    private final CategoryRepository categoryRepository;
+    private final TopicRepository topicRepository;
+    private final TagRepository tagRepository;
 
-
-    public ArticleResponse create(ArticleRequest article){
-        Article article1 = new Article();
-        article1.setTitle(article.getTitle());
-        article1.setContent(article.getContent());
-        article1.setSummary(article.getSummary());
-        article1.setThumbnail(article.getThumbnail());
-        article1.setSlug(generateUniqueSlug(article.getTitle()));
-
-        Article saved  = repo.save(article1);
-        return toResponse(saved);
+    public List<ArticleResponse> getPublishedArticles() {
+        return articleRepository.findByStatusOrderByPublishedAtDesc("published")
+                .stream().map(this::toResponse).collect(Collectors.toList());
     }
 
-    public Page<ArticleResponse> getAll(String keyword, String status, Pageable pageable){
-        Article.Status enumStatus = null;
+    public List<ArticleResponse> searchArticles(String query) {
+        return articleRepository.searchPublished(query)
+                .stream().map(this::toResponse).collect(Collectors.toList());
+    }
 
-        try {
-            if (status != null){
-                enumStatus = Article.Status.valueOf(status);
-            }
-        } catch (IllegalArgumentException e) {
-            enumStatus = null;
+    public List<ArticleResponse> getTopArticles() {
+        return articleRepository.findTop5ByViewCount()
+                .stream().map(this::toResponse).collect(Collectors.toList());
+    }
+
+    public List<ArticleResponse> getRecommendedArticles() {
+        return articleRepository.findRecommended()
+                .stream().map(this::toResponse).collect(Collectors.toList());
+    }
+
+    @Transactional
+    public ArticleResponse getArticleById(Long id) {
+        Article article = articleRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Article", id));
+        articleRepository.incrementViewCount(id);
+        return toResponse(article);
+    }
+
+    public List<ArticleResponse> getArticlesByAuthor(Long authorId) {
+        return articleRepository.findByAuthorIdOrderByCreatedAtDesc(authorId)
+                .stream().map(this::toResponse).collect(Collectors.toList());
+    }
+
+    public List<ArticleResponse> getAllArticles() {
+        return articleRepository.findAll()
+                .stream().map(this::toResponse).collect(Collectors.toList());
+    }
+
+    @Transactional
+    public ArticleResponse createArticle(ArticleRequest request, Long userId) {
+        Article article = Article.builder()
+                .authorId(userId)
+                .title(request.getTitle())
+                .summary(request.getSummary())
+                .content(request.getContent())
+                .imageUrl(request.getImageUrl())
+                .country(request.getCountry())
+                .categoryId(request.getCategoryId())
+                .status("review")
+                .build();
+
+        if (request.getTopicIds() != null && !request.getTopicIds().isEmpty()) {
+            Set<Topic> topics = new HashSet<>(topicRepository.findAllById(request.getTopicIds()));
+            article.setTopics(topics);
         }
-        Page<Article> page = repo.search(keyword, enumStatus, pageable);
-        return page.map(this::toResponse);
+
+        if (request.getTagIds() != null && !request.getTagIds().isEmpty()) {
+            Set<Tag> tags = new HashSet<>(tagRepository.findAllById(request.getTagIds()));
+            article.setTags(tags);
+        }
+
+        article = articleRepository.save(article);
+        return toResponse(article);
     }
 
-    private ArticleResponse toResponse(Article article){
-        String categoryName = (article.getTopics() != null && !article.getTopics().isEmpty())
-                ? article.getTopics().get(0).getName()
-                : "Uncategorized";
+    @Transactional
+    public ArticleResponse updateArticle(Long id, ArticleRequest request, Long userId) {
+        Article article = articleRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Article", id));
 
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        if (!article.getAuthorId().equals(userId)) {
+            throw new IllegalArgumentException("You can only edit your own articles");
+        }
+        if (!"draft".equals(article.getStatus()) && !"review".equals(article.getStatus())) {
+            throw new IllegalArgumentException("Only draft or review articles can be edited directly");
+        }
+
+        article.setTitle(request.getTitle());
+        article.setSummary(request.getSummary());
+        article.setContent(request.getContent());
+        article.setImageUrl(request.getImageUrl());
+        article.setCountry(request.getCountry());
+        article.setCategoryId(request.getCategoryId());
+
+        if (request.getTopicIds() != null) {
+            Set<Topic> topics = new HashSet<>(topicRepository.findAllById(request.getTopicIds()));
+            article.setTopics(topics);
+        }
+
+        if (request.getTagIds() != null) {
+            Set<Tag> tags = new HashSet<>(tagRepository.findAllById(request.getTagIds()));
+            article.setTags(tags);
+        }
+
+        article.setSlug(request.getTitle().toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("^-|-$", ""));
+        article = articleRepository.save(article);
+        return toResponse(article);
+    }
+
+    @Transactional
+    public void deleteUserArticle(Long id, Long userId) {
+        Article article = articleRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Article", id));
+        if (!article.getAuthorId().equals(userId)) {
+            throw new IllegalArgumentException("You can only delete your own articles");
+        }
+        if (!"draft".equals(article.getStatus())) {
+            throw new IllegalArgumentException("Only draft articles can be deleted by users");
+        }
+        articleRepository.delete(article);
+    }
+
+    @Transactional
+    public ArticleResponse updateArticleStatus(Long id, String status) {
+        Article article = articleRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Article", id));
+        article.setStatus(status);
+        if ("published".equals(status) && article.getPublishedAt() == null) {
+            article.setPublishedAt(LocalDateTime.now());
+        }
+        article = articleRepository.save(article);
+        return toResponse(article);
+    }
+
+    @Transactional
+    public void deleteArticle(Long id) {
+        if (!articleRepository.existsById(id)) {
+            throw new ResourceNotFoundException("Article", id);
+        }
+        articleRepository.deleteById(id);
+    }
+
+    public ArticleResponse toResponse(Article article) {
+        String authorName = userRepository.findById(article.getAuthorId())
+                .map(User::getUsername).orElse("Unknown");
+        String categoryName = null;
+        if (article.getCategoryId() != null) {
+            categoryName = categoryRepository.findById(article.getCategoryId())
+                    .map(Category::getName).orElse(null);
+        }
+
+        List<ArticleResponse.TopicDto> topicDtos = article.getTopics() != null
+                ? article.getTopics().stream()
+                .map(t -> ArticleResponse.TopicDto.builder()
+                        .id(t.getId()).name(t.getName()).slug(t.getSlug()).build())
+                .collect(Collectors.toList())
+                : List.of();
+
+        List<ArticleResponse.TagDto> tagDtos = article.getTags() != null
+                ? article.getTags().stream()
+                .map(t -> ArticleResponse.TagDto.builder()
+                        .id(t.getId()).name(t.getName()).build())
+                .collect(Collectors.toList())
+                : List.of();
 
         return ArticleResponse.builder()
                 .id(article.getId())
                 .title(article.getTitle())
                 .slug(article.getSlug())
-                .category(categoryName)
-                .description(article.getSummary())
+                .summary(article.getSummary())
                 .content(article.getContent())
-                .image(article.getThumbnail())
-                .views(article.getViewCount())
-                .likes(article.getLikeCount())
-                .dislikes(article.getDislikeCount())
-                .status(article.getStatus() != null ? article.getStatus().name() : null)
+                .imageUrl(article.getImageUrl())
+                .country(article.getCountry())
+                .status(article.getStatus())
+                .viewCount(article.getViewCount())
+                .likeCount(article.getLikeCount())
+                .dislikeCount(article.getDislikeCount())
+                .commentCount(article.getCommentCount())
+                .categoryId(article.getCategoryId())
+                .categoryName(categoryName)
+                .authorId(article.getAuthorId())
+                .authorName(authorName)
+                .publishedAt(article.getPublishedAt())
                 .createdAt(article.getCreatedAt())
-                .author(article.getAuthor() != null ? article.getAuthor().getUsername() : "Anonymous")
-                .country(article.getCountry() != null ? article.getCountry() : "Unknown")
-                .publishDate(article.getCreatedAt() != null ? article.getCreatedAt().format(formatter) : null)
-                .lastUpdated(article.getUpdatedAt() != null ? article.getUpdatedAt().format(formatter) : null)
-                .sections(extractSections(article.getContent()))
-                .comments(156)
+                .updatedAt(article.getUpdatedAt())
+                .topics(topicDtos)
+                .tags(tagDtos)
                 .build();
-    }
-
-    private List<SectionDTO> extractSections(String content) {
-        List<SectionDTO> sections = new ArrayList<>();
-        if (content == null || content.isEmpty()) return sections;
-
-        String[] lines = content.split("\\R");
-        for (String line : lines) {
-            if (line.trim().startsWith("## ")) {
-                String title = line.substring(3).trim();
-                String id = title.toLowerCase()
-                        .replaceAll("\\(.*?\\)", "")
-                        .replaceAll("[^a-z0-9\\s]", "")
-                        .trim()
-                        .replaceAll("\\s+", "-");
-                sections.add(new SectionDTO(title, id));
-            }
-        }
-        return sections;
-    }
-
-    public ArticleResponse update(Long id, ArticleRequest request) {
-        Article article = repo.findById(id).orElseThrow(() -> new RuntimeException("Article not found"));
-
-        article.setTitle(request.getTitle());
-        article.setContent(request.getContent());
-        article.setSummary(request.getSummary());
-        article.setThumbnail(request.getThumbnail());
-
-        Article updated = repo.save(article);
-        return toResponse(updated);
-    }
-
-    public ArticleResponse getById(Long id) {
-        Article article = repo.findById(id).orElseThrow(() -> new RuntimeException("Article Not Found"));
-        return toResponse(article);
-    }
-
-    public void delete(Long id) {
-        if (!repo.existsById(id)) {
-            throw new RuntimeException("Article Not Found");
-        }
-        repo.deleteById(id);
-    }
-
-    private String toSlug(String title) {
-        return title.toLowerCase()
-                .replaceAll("[^a-z0-9\\s]", "")
-                .replaceAll("\\s+", "-")
-                .trim();
-    }
-
-    private String generateUniqueSlug(String title) {
-        String baseSlug = toSlug(title);
-        String slug = baseSlug;
-        int count = 1;
-
-        while (repo.existsBySlug(slug)) {
-            slug = baseSlug + "-" + count;
-            count++;
-        }
-
-        return slug;
     }
 }
