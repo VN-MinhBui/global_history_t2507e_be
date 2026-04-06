@@ -15,7 +15,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/user/my/reading-list")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "http://localhost:8080")
+@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:5174"})
 public class UserReadingListController {
 
     private final ReadingListService readingListService;

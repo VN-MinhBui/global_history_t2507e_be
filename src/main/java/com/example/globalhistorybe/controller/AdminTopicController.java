@@ -12,7 +12,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/admin/topics")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "http://localhost:8080")
+@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:5174"})
 public class AdminTopicController {
 
     private final TopicRepository topicRepository;
